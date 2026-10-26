@@ -16,13 +16,16 @@ on:
       deploy_target:
         description: "Minimum macOS version (MACOSX_DEPLOYMENT_TARGET)"
         default: "13.3"
+      build_runner:
+        description: "Build runner (macos-15-large is faster but billed per minute)"
+        default: "macos-15-intel"
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: macos-15-intel
+    runs-on: ${{ inputs.build_runner }}
     timeout-minutes: 340
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ inputs.deploy_target }}
