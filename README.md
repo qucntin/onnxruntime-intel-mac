@@ -18,7 +18,12 @@ export UV_FIND_LINKS=/path/to/folder
 
 ## Build another version
 
-Actions → "Build onnxruntime wheel (Intel macOS)" → Run workflow, then set the onnxruntime version, CPython version and minimum macOS.
+Only the repo owner can start builds here. To build a different version yourself:
+
+1. Fork this repo.
+2. In your fork: Actions → "Build onnxruntime wheel (Intel macOS)" → Run workflow, then set the onnxruntime version, CPython version and minimum macOS.
+
+It runs on your own account. Standard runners are free for public repos, so a public fork costs nothing. The wheel ends up in your fork's Releases.
 
 ## Notes
 
