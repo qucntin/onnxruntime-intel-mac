@@ -1,0 +1,120 @@
+name: Build onnxruntime wheel (Intel macOS)
+
+# Builds the official microsoft/onnxruntime source at a given tag into a CPython wheel
+# for x86_64 macOS, natively on GitHub's Intel macOS runner, then smoke-tests it.
+# Microsoft stopped publishing x86_64 macOS wheels after 1.23.2.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ort_version:
+        description: "onnxruntime version (git tag without the v)"
+        default: "1.28.3"
+      python_version:
+        description: "CPython version"
+        default: "3.14"
+      deploy_target:
+        description: "Minimum macOS version (MACOSX_DEPLOYMENT_TARGET)"
+        default: "13.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 340
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ inputs.deploy_target }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Environment
+        run: |
+          uname -m; sw_vers; sysctl -n hw.ncpu; xcodebuild -version; cmake --version | head -1
+          python -c "import sys, platform; print(sys.version, platform.machine())"
+
+      - name: Fetch onnxruntime source
+        run: |
+          git clone --depth 1 --branch "v${{ inputs.ort_version }}" --recurse-submodules --shallow-submodules \
+            https://github.com/microsoft/onnxruntime.git ort
+
+      - name: Build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy>=2" packaging wheel setuptools ninja flatbuffers protobuf sympy
+
+      - name: Build wheel
+        working-directory: ort
+        run: |
+          python tools/ci_build/build.py \
+            --build_dir build \
+            --config Release \
+            --update --build --build_wheel \
+            --parallel \
+            --skip_tests \
+            --compile_no_warning_as_error \
+            --cmake_generator Ninja \
+            --osx_arch x86_64 \
+            --apple_deploy_target "${{ inputs.deploy_target }}"
+
+      - name: Collect and verify wheel
+        run: |
+          mkdir -p dist
+          cp ort/build/Release/dist/*.whl dist/
+          ls -la dist
+          mkdir -p check && cd check && unzip -q ../dist/*.whl
+          echo "== architectures and minimum macOS of every native binary"
+          find . \( -name "*.so" -o -name "*.dylib" \) -print0 | while IFS= read -r -d '' f; do
+            echo "$f: $(lipo -archs "$f") minos=$(vtool -show-build "$f" | awk '/minos/{print $2}' | head -1)"
+          done
+          cd .. && shasum -a 256 dist/*.whl | tee dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+  smoke-test:
+    needs: build
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - name: Install wheel with fastembed and embed a sentence
+        run: |
+          python -m venv venv
+          venv/bin/pip install --upgrade pip
+          venv/bin/pip install --only-binary onnxruntime --find-links dist "onnxruntime==${{ inputs.ort_version }}" fastembed
+          venv/bin/python - <<'EOF'
+          import onnxruntime as ort
+          from fastembed import TextEmbedding
+          print("onnxruntime", ort.__version__, ort.get_available_providers())
+          model = TextEmbedding("BAAI/bge-small-en-v1.5")  # the model Mnemosyne uses
+          vec = list(model.embed(["Mnemosyne smoke test on Intel macOS"]))[0]
+          assert len(vec) == 384, len(vec)
+          print("embedding ok, dims:", len(vec))
+          EOF
+
+  release:
+    needs: [build, smoke-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="ort-${{ inputs.ort_version }}-py${{ inputs.python_version }}-macos${{ inputs.deploy_target }}-x86_64"
+          gh release create "$TAG" dist/* --repo "${{ github.repository }}" --title "$TAG" \
+            --notes "Unofficial build of microsoft/onnxruntime v${{ inputs.ort_version }} for CPython ${{ inputs.python_version }} on Intel (x86_64) macOS >= ${{ inputs.deploy_target }}. Built from the unmodified upstream tag by .github/workflows/build-wheel.yml (run ${{ github.run_id }}), smoke-tested with fastembed. Checksums in SHA256SUMS. onnxruntime is MIT licensed by Microsoft; license and third-party notices are inside the wheel."
