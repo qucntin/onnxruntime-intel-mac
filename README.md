@@ -27,5 +27,5 @@ It runs on your own account. Standard runners are free for public repos, so a pu
 
 ## Notes
 
-- Microsoft raised the official minimum to macOS 14 with 1.24. These builds target macOS 13 by default. That combination is not tested by Microsoft.
+- Microsoft raised the official minimum to macOS 14 with 1.24. These builds target macOS 13.3 by default (13.3 is where Apple's C++ library gained the floating-point std::format support the source needs). That combination is not tested by Microsoft.
 - onnxruntime is MIT licensed by Microsoft. License and third-party notices ship inside the wheel.
